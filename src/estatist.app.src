@@ -1,0 +1,9 @@
+{application, estatist,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                 ]},
+  {env, []}
+ ]}.

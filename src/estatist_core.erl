@@ -119,8 +119,8 @@ init(Options) ->
 
     ets:new(?MODULE, [named_table, set, public]),
 
-    Metrics = proplists:get_value(metrics, Options),
-    Modules = proplists:get_value(modules, Options),
+    Metrics = proplists:get_value(metrics, Options, []),
+    Modules = proplists:get_value(modules, Options, []),
 
     InitMetric =
         fun({Name, Scalarity, MetricTypes}) ->

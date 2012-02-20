@@ -1,4 +1,4 @@
--module(estatist_counter).
+-module(estatist_module_counter).
 -behavour(metrics).
 
 -export([

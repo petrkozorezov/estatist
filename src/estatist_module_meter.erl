@@ -1,5 +1,5 @@
--module(estatist_meter).
--behavour(metrics).
+-module(estatist_module_meter).
+-behavour(estatist_module).
 
 -export([
          init/2,

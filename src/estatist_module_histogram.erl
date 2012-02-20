@@ -1,5 +1,5 @@
--module(estatist_histogram).
--behavour(metrics).
+-module(estatist_module_histogram).
+-behavour(estatist_module).
 
 -export([
          init/2,

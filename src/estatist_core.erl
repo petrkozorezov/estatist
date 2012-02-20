@@ -9,26 +9,26 @@
 %% API
 %%
 -export([
-		 start_link/1,
+         start_link/1,
          stop/1,
          update/2,
          update/3,
          get/3,
          get/4,
          test/0
-		]).
+        ]).
 
 %%
 %% gen_server callbacks
 %%
 -export([
-		 init/1,
-		 handle_call/3,
-		 handle_cast/2,
-		 handle_info/2,
-		 terminate/2,
-		 code_change/3
-		]).
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
+        ]).
 
 %%
 %% API
@@ -91,29 +91,29 @@ get(Name, Types, Params, RowID) ->
 
 init(Options) ->
 
-	ets:new(?MODULE, [named_table, set, public]),
+    ets:new(?MODULE, [named_table, set, public]),
 
-	Metrics = proplists:get_value(metrics, Options),
-	Modules = proplists:get_value(modules, Options),
+    Metrics = proplists:get_value(metrics, Options),
+    Modules = proplists:get_value(modules, Options),
 
-	InitMetric =
-		fun({Name, Scalarity, MetricTypes}) ->
-				Context = init_metric(Scalarity, Name, MetricTypes, Modules),
-				true = ets:insert_new(?MODULE, {Name, Scalarity, Context})
-		end,
+    InitMetric =
+        fun({Name, Scalarity, MetricTypes}) ->
+                Context = init_metric(Scalarity, Name, MetricTypes, Modules),
+                true = ets:insert_new(?MODULE, {Name, Scalarity, Context})
+        end,
 
-	lists:foreach(InitMetric, Metrics),
+    lists:foreach(InitMetric, Metrics),
 
-	{ok, undefined}.
+    {ok, undefined}.
 
 handle_call({stop, Reason}, _, State) ->
     {stop, Reason, ok, State};
 
 handle_call({add_tbl_row, Tid, Name, RowName, MagicTuples}, _, State) ->
     InitMetricType =
-		fun(MagicTuple) ->
-				init_metric_type({Name, RowName}, MagicTuple)
-		end,
+        fun(MagicTuple) ->
+                init_metric_type({Name, RowName}, MagicTuple)
+        end,
     Value = {RowName, lists:map(InitMetricType, MagicTuples)},
     true = ets:insert_new(Tid, Value),
     Reply = Value,
@@ -141,11 +141,11 @@ code_change(_, State, _) ->
 %% Local functions
 %%
 init_metric(var, Name, MetricTypes, Modules) ->
-	InitMetricType =
-		fun(MetricType) ->
-				init_metric_type(Name, make_magic_tuple(MetricType, Modules))
-		end,
-	lists:map(InitMetricType, MetricTypes);
+    InitMetricType =
+        fun(MetricType) ->
+                init_metric_type(Name, make_magic_tuple(MetricType, Modules))
+        end,
+    lists:map(InitMetricType, MetricTypes);
 
 init_metric(tbl, _Name, MetricTypes, Modules) ->
     F = fun(MetricType) ->
@@ -228,19 +228,19 @@ schedule_tick(Tick, Context, Mod) ->
     {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}).
 
 test() ->
-	Options = [
-			   {metrics, [
+    Options = [
+               {metrics, [
                           %%{online_counte1, var, [counter]},
-						  {online_counter, var, [counter]},
-						  {connects,       var, [meter]},
+                          {online_counter, var, [counter]},
+                          {connects,       var, [meter]},
                           {game_requests,  tbl, [histogram, meter]},
-						  {player_load,    var, [{meter, [{tick, 1000}]}, {histogram, [{size, 1000}]}]},
-						  {player_save,    var, [meter, histogram]}
-						 ]},
-			   {modules, [
+                          {player_load,    var, [{meter, [{tick, 1000}]}, {histogram, [{size, 1000}]}]},
+                          {player_save,    var, [meter, histogram]}
+                         ]},
+               {modules, [
                           {meter, metrics_meter}
                          ]}
-			  ],
+              ],
     {ok, _Pid} = start_link(Options),
     update(online_counter, 1),
     update(player_save, 1),

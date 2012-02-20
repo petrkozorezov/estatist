@@ -19,3 +19,7 @@ get(Name, Types, Params) ->
 
 get(Name, Types, Params, RowID) ->
     estatist_core:get(Name, Types, Params, RowID).
+
+%% TODO
+%%get_next() ->
+%%    ok.

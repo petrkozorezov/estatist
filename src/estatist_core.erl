@@ -55,29 +55,55 @@ update(Name, Value, RowID) ->
         end,
     update_by_contexts({Name, RowName}, Contexts, Value).
 
-%% Params = param | [] | [param1, param2]
+%% MetricNames = metric | all_metrics | [metric1, metric2]
+%% Params = param | all_params | [param1, param2]
 %% для one param | all params | param and param2 соответственно
 %% в результате будет param_value | [{param_name, param_value}] | [param1_value, param2_value]
-%% аналогично для Types
-get(Name, Types, Params) ->
-    case get_metric(Name) of
-        {Name, var, Contexts} ->
-            get_from_contexts(Name, Types, Params, Contexts);
-        {Name, tbl, {Tid, _}} ->
-            F = fun({RowName, Contexts}, Acc) ->
-                        [{RowName, get_from_contexts({Name, RowName}, Types, Params, Contexts)} | Acc]
-                end,
-            lists:reverse(ets:foldl(F, [], Tid))
-    end.
+%% аналогично для Types (только all_params -> all_types)
 
-get(Name, Types, Params, RowID) ->
-    {Name, tbl, {Tid, _}} = get_metric(Name),
-    case get_tbl_row(Tid, RowID) of
-        undefined ->
-            undefined;
-        {RowName, Contexts} ->
-            get_from_contexts({Name, RowName}, Types, Params, Contexts)
-    end.
+get(Names, Types, Params) ->
+    F = fun({Name, var, Contexts}) ->
+                get_from_contexts(Name, Types, Params, Contexts);
+           ({Name, tbl, {_, _}}) ->
+                get(Name, Types, Params, all)
+        end,
+    get(F, Names).
+
+%% RowSecificID = {id, RowID} | first | last | {next, RowID} | {prev, RowID} | all | [{id, RowID}]
+%% TODO refactoring
+get(Names, Types, Params, RowID) ->
+    F = fun({Name, tbl, {Tid, _}}) ->
+                GetFromRow = fun(ID) ->
+                                     case get_tbl_row(Tid, ID) of
+                                         undefined ->
+                                             undefined;
+                                         {RowName, Contexts} ->
+                                             get_from_contexts({Name, RowName}, Types, Params, Contexts)
+                                     end
+                             end,
+                case RowID of
+                    {id, ID} ->
+                        GetFromRow(ID);
+                    first ->
+                        GetFromRow(ets:first(Tid));
+                    last ->
+                        GetFromRow(ets:last(Tid));
+                    {next, ID} ->
+                        GetFromRow(ets:next(Tid, ID));
+                    {prev, ID} ->
+                        GetFromRow(ets:prev(Tid, ID));
+                    all ->
+                        F1 = fun({RowName, Contexts}, Acc) ->
+                                    [{RowName, get_from_contexts({Name, RowName}, Types, Params, Contexts)} | Acc]
+                            end,
+                        lists:reverse(ets:foldl(F1, [], Tid));
+                    List when is_list(List) ->
+                        lists:map(fun({id, ID}) -> GetFromRow(ID) end, List)
+                end;
+           ({_, var, {_, _}}) ->
+                undefined
+        end,
+    get(F, Names).
 
 %%
 %% gen_server callbacks
@@ -181,6 +207,13 @@ split_metric_type_option(MetricType) ->
             {MT, []}
     end.    
 
+get(F, all_metrics) ->
+    ets:foldr(fun(Metric={Name, _ ,_}, Acc) -> [{Name, F(Metric)} | Acc] end, [], ?MODULE);
+get(F, Names) when is_list(Names) ->
+    lists:map(fun(Name) -> {Name, F(get_metric(Name))} end, Names);
+get(F, Name) when is_atom(Name) ->
+    F(get_metric(Name)).
+
 get_metric(Name) when is_atom(Name)->
     case ets:lookup(?MODULE, Name) of
         [] ->
@@ -227,6 +260,7 @@ schedule_tick(undefined, _, _) ->
 schedule_tick(Tick, Context, Mod) ->
     {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}).
 
+%% TODO auto test
 test() ->
     Options = [
                {metrics, [
@@ -238,7 +272,7 @@ test() ->
                           {player_save,    var, [meter, histogram]}
                          ]},
                {modules, [
-                          {meter, metrics_meter}
+                          {meter, estatist_module_meter}
                          ]}
               ],
     {ok, _Pid} = start_link(Options),
@@ -252,7 +286,8 @@ test() ->
                 io:format("get \"player_save\" histogram: ~640p ~n", [get(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
 
                 update(game_requests, 100, list_to_atom(integer_to_list(V))),
-                io:format("get \"game_requests\" all: ~640p ~n", [get(game_requests, all_types, all_params)])
+                io:format("get \"game_requests\" all: ~640p ~n", [get(game_requests, all_types, all_params)]),
+                io:format("all: ~640p ~n", [get(all_metrics, all_types, all_params)])
                 
         end,
     lists:foreach(F, [2,1,3,0]),

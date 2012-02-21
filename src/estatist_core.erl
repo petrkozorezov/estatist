@@ -44,7 +44,8 @@ update(Name, Value) ->
     update_by_contexts(Name, Contexts, Value).
 
 
-update(Name, Value, RowID) ->
+update(Name, Value, InputRowID) ->
+    RowID = correct_row_id(InputRowID),
     {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
     {RowName, Contexts} =
         case get_tbl_row(Tid, RowID) of
@@ -83,22 +84,22 @@ get(Names, Types, Params, RowID) ->
                              end,
                 case RowID of
                     {id, ID} ->
-                        GetFromRow(ID);
+                        GetFromRow(correct_row_id(ID));
                     first ->
                         GetFromRow(ets:first(Tid));
                     last ->
                         GetFromRow(ets:last(Tid));
                     {next, ID} ->
-                        GetFromRow(ets:next(Tid, ID));
+                        GetFromRow(ets:next(Tid, correct_row_id(ID)));
                     {prev, ID} ->
-                        GetFromRow(ets:prev(Tid, ID));
+                        GetFromRow(ets:prev(Tid, correct_row_id(ID)));
                     all ->
                         F1 = fun({RowName, Contexts}, Acc) ->
                                     [{RowName, get_from_contexts({Name, RowName}, Types, Params, Contexts)} | Acc]
                             end,
                         lists:reverse(ets:foldl(F1, [], Tid));
                     List when is_list(List) ->
-                        lists:map(fun({id, ID}) -> GetFromRow(ID) end, List)
+                        lists:map(fun({id, ID}) -> GetFromRow(correct_row_id(ID)) end, List)
                 end;
            ({_, var, {_, _}}) ->
                 undefined
@@ -123,9 +124,11 @@ init(Options) ->
     Modules = proplists:get_value(modules, Options, []),
 
     InitMetric =
-        fun({Name, Scalarity, MetricTypes}) ->
+        fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and (Scalarity == var) and (Scalarity == tbl) ->
                 Context = init_metric(Scalarity, Name, MetricTypes, Modules),
-                true = ets:insert_new(?MODULE, {Name, Scalarity, Context})
+                true = ets:insert_new(?MODULE, {Name, Scalarity, Context});
+           (IncorrectMetric) ->
+                throw({incorrect_metric, IncorrectMetric})
         end,
 
     lists:foreach(InitMetric, Metrics),
@@ -244,7 +247,7 @@ update_by_contexts(Name, Contexts, Value) ->
     lists:foreach(F, Contexts),
     ok.
 
-add_tbl_row(Tid, Name, RowName, MagicTuples) when is_atom(RowName) ->
+add_tbl_row(Tid, Name, RowName, MagicTuples) ->
     gen_server:call(?MODULE, {add_tbl_row, Tid, Name, RowName, MagicTuples}).
 
 get_tbl_row(Tid, RowID) ->
@@ -254,6 +257,22 @@ get_tbl_row(Tid, RowID) ->
         [E] ->
             E
     end.
+
+
+correct_row_id(Int) when is_integer(Int) ->
+    integer_to_list(Int);
+correct_row_id(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+correct_row_id(List) when is_list(List) ->
+    lists:map(fun(E) when is_integer(E) -> E;
+                 (_) ->
+                      throw({incorrect_row_id, List})
+              end, List);
+correct_row_id(Atom) when is_atom(Atom) ->
+    atom_to_list(Atom);
+correct_row_id(E) ->
+    throw({incorrect_row_id, E}).
+
 
 schedule_tick(undefined, _, _) ->
     ok;

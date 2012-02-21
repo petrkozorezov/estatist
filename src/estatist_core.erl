@@ -124,7 +124,7 @@ init(Options) ->
     Modules = proplists:get_value(modules, Options, []),
 
     InitMetric =
-        fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and (Scalarity == var) and (Scalarity == tbl) ->
+        fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
                 Context = init_metric(Scalarity, Name, MetricTypes, Modules),
                 true = ets:insert_new(?MODULE, {Name, Scalarity, Context});
            (IncorrectMetric) ->

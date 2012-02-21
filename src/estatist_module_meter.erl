@@ -20,7 +20,7 @@ init(_, Options) ->
         end,
     Params = lists:foldr(ParseOption, #params{}, Options),
 
-    {ok, Meter} = basho_metrics_nifs:meter_new(),
+    {ok, Meter} = basho_metrics_nifs:meter_new([{tick_interval, Params#params.tick}]),
     {Meter, Params#params.tick}.
 
 

@@ -40,21 +40,31 @@ stop(Reason) ->
     gen_server:call(?MODULE, {stop, Reason}).
 
 update(Name, Value) ->
-    {Name, var, Contexts} = get_metric(Name),
-    update_by_contexts(Name, Contexts, Value).
+    try
+        {Name, var, Contexts} = get_metric(Name),
+        update_by_contexts(Name, Contexts, Value),
+        ok
+    catch
+        _:E -> {error, E}
+    end.
 
 
 update(Name, Value, InputRowID) ->
-    RowID = correct_row_id(InputRowID),
-    {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
-    {RowName, Contexts} =
-        case get_tbl_row(Tid, RowID) of
-            undefined ->
-                add_tbl_row(Tid, Name, RowID, MagicTuples);
-            V ->
-                V
-        end,
-    update_by_contexts({Name, RowName}, Contexts, Value).
+    try
+        RowID = correct_row_id(InputRowID),
+        {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
+        {RowName, Contexts} =
+            case get_tbl_row(Tid, RowID) of
+                undefined ->
+                    add_tbl_row(Tid, Name, RowID, MagicTuples);
+                V ->
+                    V
+            end,
+        update_by_contexts({Name, RowName}, Contexts, Value),
+        ok
+    catch
+        _:E -> {error, E}
+    end.
 
 %% MetricNames = metric | all_metrics | [metric1, metric2]
 %% Params = param | all_params | [param1, param2]

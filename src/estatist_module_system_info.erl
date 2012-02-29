@@ -35,4 +35,8 @@ terminate() ->
     ok.
 
 get_all() ->
-    [{Type, erlang:system_info(Type)} || Type <- [logical_processors_online, process_count, process_limit, thread_pool_size, creation]].
+    {_, WC} = erlang:statistics(wall_clock),
+    {_, RT} = erlang:statistics(runtime),
+    Cpu = round(100 * RT / WC),
+
+    [{cpu, Cpu} | [{Type, erlang:system_info(Type)} || Type <- [logical_processors_online, process_count, process_limit, thread_pool_size, creation]]].

@@ -16,7 +16,7 @@ init(Name, []) ->
         _ ->
             ok
     end,
-    ets:insert_new(?MODULE, {Name, 0}),
+    true = ets:insert_new(?MODULE, {Name, 0}),
     {undefined, undefined}.
 
 get(Name, Type, Params) when (Params =:= all_params) or (Params =:= [count]) ->

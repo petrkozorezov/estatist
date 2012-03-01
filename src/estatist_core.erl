@@ -53,13 +53,7 @@ update(Name, Value, InputRowID) ->
     try
         RowID = correct_row_id(InputRowID),
         {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
-        {RowName, Contexts} =
-            case get_tbl_row(Tid, RowID) of
-                undefined ->
-                    add_tbl_row(Tid, Name, RowID, MagicTuples);
-                V ->
-                    V
-            end,
+        {RowName, Contexts} = get_insert_tbl_row(Tid, Name, RowID, MagicTuples),
         update_by_contexts({Name, RowName}, Contexts, Value),
         ok
     catch
@@ -149,13 +143,19 @@ handle_call({stop, Reason}, _, State) ->
     {stop, Reason, ok, State};
 
 handle_call({add_tbl_row, Tid, Name, RowName, MagicTuples}, _, State) ->
-    InitMetricType =
-        fun(MagicTuple) ->
-                init_metric_type({Name, RowName}, MagicTuple)
-        end,
-    Value = {RowName, lists:map(InitMetricType, MagicTuples)},
-    true = ets:insert_new(Tid, Value),
-    Reply = Value,
+    %% todo lookup
+    Reply = case get_tbl_row(Tid, RowName) of
+        undefined ->
+            InitMetricType =
+                fun(MagicTuple) ->
+                        init_metric_type({Name, RowName}, MagicTuple)
+                end,
+            Value = {RowName, lists:map(InitMetricType, MagicTuples)},
+            true = ets:insert_new(Tid, Value),
+            {ok, Value};
+        _ ->
+            {error, dublicate}
+    end,
     {reply, Reply, State};
 
 handle_call(_, _, State) ->
@@ -256,6 +256,19 @@ update_by_contexts(Name, Contexts, Value) ->
         end,
     lists:foreach(F, Contexts),
     ok.
+
+get_insert_tbl_row(Tid, Name, RowID, MagicTuples) ->
+    case get_tbl_row(Tid, RowID) of
+        undefined ->
+            case add_tbl_row(Tid, Name, RowID, MagicTuples) of
+                {ok, V} ->
+                    V;
+                {error, dublicate} ->
+                    get_insert_tbl_row(Tid, Name, RowID, MagicTuples)
+            end;
+        V ->
+            V
+    end.
 
 add_tbl_row(Tid, Name, RowName, MagicTuples) ->
     gen_server:call(?MODULE, {add_tbl_row, Tid, Name, RowName, MagicTuples}).

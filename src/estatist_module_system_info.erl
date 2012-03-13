@@ -9,6 +9,14 @@
          terminate/0
         ]).
 
+-export([
+         uptime/0,
+         cpu_usage/0,
+         process_usage/0,
+         io_input/0,
+         io_output/0
+        ]).
+
 init(_, []) ->
     {undefined, undefined}.
 
@@ -35,13 +43,25 @@ terminate() ->
     ok.
 
 get_all() ->
-    [{cpu, cpu()}, {uptime, uptime()}] ++ [{Type, erlang:system_info(Type)} || Type <- [logical_processors_online, process_count, process_limit, thread_pool_size, creation]].
+    [{X, ?MODULE:X()} || X <- [cpu_usage, uptime, process_usage, io_input, io_output]].
 
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
     UpTime div 1000.
 
-cpu() ->
+cpu_usage() ->
     {_, WC} = erlang:statistics(wall_clock),
     {_, RT} = erlang:statistics(runtime),
-    round(100 * RT / WC).
+    P = erlang:system_info(logical_processors_online),
+    round(100 * RT / WC / P).
+
+process_usage() ->
+    erlang:system_info(process_count) div erlang:system_info(process_limit) * 100.
+
+io_input() ->
+    {{input, Input}, _} = erlang:statistics(io),
+    Input.
+
+io_output() ->
+    {_, {output, Output}} = erlang:statistics(io),
+    Output.

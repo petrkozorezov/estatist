@@ -12,14 +12,14 @@
 init(Name, []) ->
     case ets:info(?MODULE) of
         undefined ->
-            ets:new(?MODULE, [set, public, named_table]);
+            ?MODULE = ets:new(?MODULE, [set, public, named_table]);
         _ ->
             ok
     end,
     true = ets:insert_new(?MODULE, {Name, 0}),
     {undefined, undefined}.
 
-get(Name, Type, Params) when (Params =:= all_params) or (Params =:= [count]) ->
+get(Name, Type, Params) when (Params =:= all) or (Params =:= [count]) ->
     [{count, get(Name, Type, count)}];
 get(Name, _, count) ->
     case ets:lookup(?MODULE, Name) of

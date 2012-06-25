@@ -12,7 +12,7 @@
 init(_, []) ->
     {undefined, undefined}.
 
-get(_, _, all_params) ->
+get(_, _, all) ->
     get_all();
 
 get(_, _, Params) when is_list(Params) ->

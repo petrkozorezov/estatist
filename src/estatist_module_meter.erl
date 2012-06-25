@@ -24,7 +24,7 @@ init(_, Options) ->
     {Meter, Params#params.tick}.
 
 
-get(_, Meter, all_params) ->
+get(_, Meter, all) ->
     basho_metrics_nifs:meter_stats(Meter);
 
 get(_, Meter, Params) when is_list(Params) ->

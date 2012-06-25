@@ -1,8 +1,0 @@
-#!/usr/bin/env escript
-
-main(Args) ->
-	[ModuleName] = Args,
-	Module = list_to_atom(ModuleName),
-	code:add_path("./ebin"),
-	code:load_file(Module),
-	Module:test().

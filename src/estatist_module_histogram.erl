@@ -23,7 +23,7 @@ init(_, Options) ->
     {ok, Histogram} = basho_metrics_nifs:histogram_new([{size, Params#params.size}]),
     {Histogram, undefined}.
 
-get(_, Histogram, all_params) ->
+get(_, Histogram, all) ->
     basho_metrics_nifs:histogram_stats(Histogram);
 
 get(_, Histogram, Params) when is_list(Params) ->

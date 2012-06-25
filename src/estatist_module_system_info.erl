@@ -14,13 +14,14 @@
          cpu_usage/0,
          process_usage/0,
          io_input/0,
-         io_output/0
+         io_output/0,
+         process_count/0
         ]).
 
 init(_, []) ->
     {undefined, undefined}.
 
-get(_, _, all_params) ->
+get(_, _, all) ->
     get_all();
 
 get(_, _, Params) when is_list(Params) ->
@@ -43,7 +44,7 @@ terminate() ->
     ok.
 
 get_all() ->
-    [{X, ?MODULE:X()} || X <- [cpu_usage, uptime, process_usage, io_input, io_output]].
+    [{X, ?MODULE:X()} || X <- [cpu_usage, uptime, process_usage, io_input, io_output, process_count]].
 
 uptime() ->
     {UpTime, _} = erlang:statistics(wall_clock),
@@ -65,3 +66,6 @@ io_input() ->
 io_output() ->
     {_, {output, Output}} = erlang:statistics(io),
     Output.
+
+process_count() ->
+    erlang:system_info(process_count).

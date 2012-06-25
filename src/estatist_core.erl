@@ -3,18 +3,18 @@
 
 -define(SERVER, {global, ?MODULE}).
 
-%% TODO terminate
-
 %%
 %% API
 %%
 -export([
          start_link/1,
          stop/1,
+         add_metric/3,
+         delete_metric/1,
          update/2,
-         update/3,
          get/3,
-         get/4,
+         select/3,
+         select/4,
          test/0
         ]).
 
@@ -39,44 +39,79 @@ start_link(Options) ->
 stop(Reason) ->
     gen_server:call(?MODULE, {stop, Reason}).
 
+
+-spec add_metric(Name, Scalarity, MetricTypes) -> ok | {error, term()} when
+    Name        :: estatist:metric_name(),
+    Scalarity   :: estatist:metric_scalarity(),
+    MetricTypes :: estatist:metric_types().
+add_metric(Name, Scalarity, MetricTypes) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
+    try
+        Context = init_metric(Scalarity, Name, MetricTypes),
+        true = ets:insert_new(?MODULE, {Name, Scalarity, Context}), ok
+    catch
+        _:E -> {error, E}
+    end;
+add_metric(Name, Scalarity, MetricTypes) ->
+    {error, {incorrect_metric, {Name, Scalarity, MetricTypes}}}.
+
+
+-spec delete_metric(Name) -> ok when
+    Name :: estatist:metric_name().
+delete_metric(Name) ->
+    true = ets:delete(?MODULE, Name), ok.
+
+
+-spec update(MetricID, Value) -> ok | {error, term()} when
+    MetricID :: estatist:metric_id(),
+    Value :: estatist:metric_input_value().
+update({Name, RowID}, Value) ->
+    try
+        CorrectRowID = correct_row_id(RowID),
+        {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
+        {RowName, Contexts} = get_insert_tbl_row(Tid, Name, CorrectRowID, MagicTuples),
+        update_by_contexts({Name, RowName}, Contexts, Value), ok
+    catch
+        _:E -> {error, E}
+    end;
 update(Name, Value) ->
     try
         {Name, var, Contexts} = get_metric(Name),
-        update_by_contexts(Name, Contexts, Value),
-        ok
+        update_by_contexts(Name, Contexts, Value), ok
     catch
         _:E -> {error, E}
     end.
 
 
-update(Name, Value, InputRowID) ->
+get({Name, RowID}, Type, Param) ->
     try
-        RowID = correct_row_id(InputRowID),
-        {Name, tbl, {Tid, MagicTuples}} = get_metric(Name),
-        {RowName, Contexts} = get_insert_tbl_row(Tid, Name, RowID, MagicTuples),
-        update_by_contexts({Name, RowName}, Contexts, Value),
-        ok
+        {Name, tbl, {Tid, _}} = get_metric(Name),
+        {RowName, Contexts} = get_tbl_row(Tid, correct_row_id(RowID)),
+        get_from_contexts({Name, RowName}, Type, Param, Contexts)
+    catch
+        _:E -> {error, E}
+    end;
+get(Name, Type, Param) -> 
+    try
+        {Name, var, Contexts} = get_metric(Name),
+        get_from_contexts(Name, Type, Param, Contexts)
     catch
         _:E -> {error, E}
     end.
 
-%% MetricNames = metric | all_metrics | [metric1, metric2]
-%% Params = param | all_params | [param1, param2]
-%% для one param | all params | param and param2 соответственно
-%% в результате будет param_value | [{param_name, param_value}] | [param1_value, param2_value]
-%% аналогично для Types (только all_params -> all_types)
 
-get(Names, Types, Params) ->
+-spec select(estatist:select_param(estatist:metric_name()), estatist:select_param(estatist:metric_type()), estatist:select_param(estatist:metric_type_param())) ->
+    estatist:select_results().
+select(Names, Types, Params) ->
     F = fun({Name, var, Contexts}) ->
                 get_from_contexts(Name, Types, Params, Contexts);
            ({Name, tbl, {_, _}}) ->
-                get(Name, Types, Params, all)
+                select(Name, Types, Params, all)
         end,
-    get(F, Names).
+    select(F, Names).
 
-%% RowSecificID = {id, RowID} | first | last | {next, RowID} | {prev, RowID} | all | [{id, RowID}]
-%% TODO refactoring
-get(Names, Types, Params, RowID) ->
+% -spec select(estatist:select_names(), estatist:select_types(), estatist:select_params(), estatist:select_row_id()) ->
+%     estatist:select_results().
+select(Names, Types, Params, RowID) ->
     F = fun({Name, tbl, {Tid, _}}) ->
                 GetFromRow = fun(ID) ->
                                      case get_tbl_row(Tid, ID) of
@@ -103,12 +138,16 @@ get(Names, Types, Params, RowID) ->
                             end,
                         lists:reverse(ets:foldl(F1, [], Tid));
                     List when is_list(List) ->
-                        lists:map(fun({id, ID}) -> GetFromRow(correct_row_id(ID)) end, List)
+                        % lists:map(fun({id, ID}) -> GetFromRow(correct_row_id(ID)) end, List)
+                        [select_1(V, GetFromRow) || V <- List]
                 end;
            ({_, var, {_, _}}) ->
                 undefined
         end,
-    get(F, Names).
+    select(F, Names).
+
+select_1({id, ID}, GetFromRow) ->
+    GetFromRow(correct_row_id(ID)).
 
 %%
 %% gen_server callbacks
@@ -122,15 +161,13 @@ get(Names, Types, Params, RowID) ->
 
 init(Options) ->
 
-    ets:new(?MODULE, [named_table, set, public]),
+    ?MODULE = ets:new(?MODULE, [named_table, set, public]),
 
     Metrics = proplists:get_value(metrics, Options, []),
-    Modules = proplists:get_value(modules, Options, []),
 
     InitMetric =
         fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
-                Context = init_metric(Scalarity, Name, MetricTypes, Modules),
-                true = ets:insert_new(?MODULE, {Name, Scalarity, Context});
+                add_metric(Name, Scalarity, MetricTypes);
            (IncorrectMetric) ->
                 throw({incorrect_metric, IncorrectMetric})
         end,
@@ -179,23 +216,23 @@ code_change(_, State, _) ->
 %%
 %% Local functions
 %%
-init_metric(var, Name, MetricTypes, Modules) ->
+init_metric(var, Name, MetricTypes) ->
     InitMetricType =
         fun(MetricType) ->
-                init_metric_type(Name, make_magic_tuple(MetricType, Modules))
+                init_metric_type(Name, make_magic_tuple(MetricType))
         end,
     lists:map(InitMetricType, MetricTypes);
 
-init_metric(tbl, _Name, MetricTypes, Modules) ->
+init_metric(tbl, _Name, MetricTypes) ->
     F = fun(MetricType) ->
-                make_magic_tuple(MetricType, Modules)
+                make_magic_tuple(MetricType)
         end,
     %%io:format(" init table \"~p\" ~p~n", [Name, MetricTypes]),
     {ets:new(?MODULE, [public, set]), lists:map(F, MetricTypes)}.
 
-make_magic_tuple(MetricType, Modules) ->
+make_magic_tuple(MetricType) ->
     {SplittedMetricType, Options} = split_metric_type_option(MetricType),
-    Mod = get_metric_type_module(SplittedMetricType, Modules),
+    Mod = get_metric_type_module(SplittedMetricType),
     {SplittedMetricType, Mod, Options}.
 
 init_metric_type(Name, {MetricType, Mod, Options}) ->
@@ -204,27 +241,22 @@ init_metric_type(Name, {MetricType, Mod, Options}) ->
     %%io:format(" init \"~p\" [~p]: ~p~n", [Name, MetricType, Context]),
     {MetricType, Mod, Context}.
 
-get_metric_type_module(MetricType, Modules) ->
-    case proplists:get_value(MetricType, Modules) of
-        undefined ->
-            list_to_atom("estatist_module_" ++ atom_to_list(MetricType));
-        M ->
-            M
-    end.
+get_metric_type_module(MetricType) ->
+    list_to_atom("estatist_module_" ++ atom_to_list(MetricType)).
 
 split_metric_type_option(MetricType) ->
     case MetricType of
-        {MT, Opt} ->
-            {MT, Opt};
-        MT ->
-            {MT, []}
+        {MT, Opt} = T1 -> T1;
+        MT -> {MT, []}
     end.    
 
-get(F, all_metrics) ->
+
+select(F, all) ->
     ets:foldr(fun(Metric={Name, _ ,_}, Acc) -> [{Name, F(Metric)} | Acc] end, [], ?MODULE);
-get(F, Names) when is_list(Names) ->
-    lists:map(fun(Name) -> {Name, F(get_metric(Name))} end, Names);
-get(F, Name) when is_atom(Name) ->
+select(F, Names) when is_list(Names) ->
+    % lists:map(fun(Name) -> {Name, F(get_metric(Name))} end, Names);
+    [{Name, F(get_metric(Name))} || Name <- Names];
+select(F, Name) when is_atom(Name) ->
     F(get_metric(Name)).
 
 get_metric(Name) when is_atom(Name)->
@@ -235,13 +267,14 @@ get_metric(Name) when is_atom(Name)->
             E
     end.
 
-get_from_contexts(Name, all_types, Params, Contexts) ->
+get_from_contexts(Name, all, Params, Contexts) ->
     F = fun({Type, Mod, Context}) ->
                 {Type, Mod:get(Name, Context, Params)}
         end,
     lists:map(F, Contexts);
 get_from_contexts(Name, Types, Params, Contexts) when is_list(Types) ->
-    lists:zip(Types, lists:map(fun(Type) -> get_from_contexts(Name, Type, Params, Contexts) end, Types));
+    lists:zip(Types, [get_from_contexts(Name, Type, Params, Contexts) || Type <- Types]);
+    %%lists:zip(Types, lists:map(fun(Type) -> get_from_contexts(Name, Type, Params, Contexts) end, Types));
 get_from_contexts(Name, Type, Params, Contexts) when is_atom(Type) ->
     case lists:keyfind(Type, 1, Contexts) of
         false ->
@@ -256,6 +289,7 @@ update_by_contexts(Name, Contexts, Value) ->
         end,
     lists:foreach(F, Contexts),
     ok.
+
 
 get_insert_tbl_row(Tid, Name, RowID, MagicTuples) ->
     case get_tbl_row(Tid, RowID) of
@@ -287,20 +321,24 @@ correct_row_id(Int) when is_integer(Int) ->
 correct_row_id(Bin) when is_binary(Bin) ->
     binary_to_list(Bin);
 correct_row_id(List) when is_list(List) ->
-    lists:map(fun(E) when is_integer(E) -> E;
-                 (_) ->
-                      throw({incorrect_row_id, List})
-              end, List);
+    % lists:map(fun(E) when is_integer(E) -> E;
+    %              (_) ->
+    %                   throw({incorrect_row_id, List})
+    %           end, List);
+    [correct_row_id_1(V, List) || V <- List];
 correct_row_id(Atom) when is_atom(Atom) ->
     atom_to_list(Atom);
 correct_row_id(E) ->
     throw({incorrect_row_id, E}).
 
+correct_row_id_1(E, List) when is_integer(E) -> E;
+correct_row_id_1(_, List) ->
+    throw({incorrect_row_id, List}).
 
 schedule_tick(undefined, _, _) ->
     ok;
 schedule_tick(Tick, Context, Mod) ->
-    {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}).
+    {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}), ok.
 
 %% TODO auto test
 test() ->
@@ -318,18 +356,18 @@ test() ->
                          ]}
               ],
     {ok, _Pid} = start_link(Options),
-    update(online_counter, 1),
-    update(player_save, 1),
-    update(player_save, 100),
+    ok = update(online_counter, 1),
+    ok = update(player_save, 1),
+    ok = update(player_save, 100),
     F = fun(V) ->
                 timer:sleep(1000),
-                io:format("get \"online_counter\": ~640p ~n", [get(online_counter, counter, count)]),
-                io:format("get \"player_save\" meter: ~640p ~n", [get(player_save, meter, [one, five, fifteen])]),
-                io:format("get \"player_save\" histogram: ~640p ~n", [get(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
+                io:format("select \"online_counter\": ~640p ~n", [select(online_counter, counter, count)]),
+                io:format("select \"player_save\" meter: ~640p ~n", [select(player_save, meter, [one, five, fifteen])]),
+                io:format("select \"player_save\" histogram: ~640p ~n", [select(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
 
-                update(game_requests, 100, list_to_atom(integer_to_list(V))),
-                io:format("get \"game_requests\" all: ~640p ~n", [get(game_requests, all_types, all_params)]),
-                io:format("all: ~640p ~n", [get(all_metrics, all_types, all_params)])
+                ok = update({game_requests, list_to_atom(integer_to_list(V))}, 100),
+                io:format("select \"game_requests\" all: ~640p ~n", [select(game_requests, all, all)]),
+                io:format("all: ~640p ~n", [select(all, all, all)])
                 
         end,
     lists:foreach(F, [2,1,3,0]),

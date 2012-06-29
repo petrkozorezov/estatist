@@ -255,11 +255,10 @@ init_metric_type(Name, {MetricType, Mod, Options}) ->
 get_metric_type_module(MetricType) ->
     list_to_atom("estatist_module_" ++ atom_to_list(MetricType)).
 
-split_metric_type_option(MetricType) ->
-    case MetricType of
-        {MT, Opt} = T1 -> T1;
-        MT -> {MT, []}
-    end.    
+split_metric_type_option({_MT, _Opt} = T1) ->
+    T1;
+split_metric_type_option(MT) ->
+    {MT, []}.
 
 
 select(F, all) ->
@@ -342,7 +341,7 @@ correct_row_id(Atom) when is_atom(Atom) ->
 correct_row_id(E) ->
     throw({incorrect_row_id, E}).
 
-correct_row_id_1(E, List) when is_integer(E) -> E;
+correct_row_id_1(E, _) when is_integer(E) -> E;
 correct_row_id_1(_, List) ->
     throw({incorrect_row_id, List}).
 

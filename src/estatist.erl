@@ -162,7 +162,7 @@ measure_call_time(Fun, {count, TestCallCount}) ->
 
 
 %% @private
-measure_call_time_rec(Histogram, Fun, 0) ->
+measure_call_time_rec(_, _, 0) ->
     ok;
 measure_call_time_rec(Histogram, Fun, TestCallCount) ->
     {T, _} = tc(Fun),

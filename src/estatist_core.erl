@@ -1,3 +1,6 @@
+% @author Kozorezov Petr <petr.kozorezov@gmail.com>
+% @copyright 2012 Kozorezov Petr
+% @private
 -module(estatist_core).
 -behaviour(gen_server).
 
@@ -100,17 +103,21 @@ get(Name, Type, Param) ->
 
 
 -spec select(estatist:select_param(estatist:metric_name()), estatist:select_param(estatist:metric_type()), estatist:select_param(estatist:metric_type_param())) ->
-    estatist:select_results().
+    {ok, estatist:select_results()} | {error, term()}.
 select(Names, Types, Params) ->
     F = fun({Name, var, Contexts}) ->
                 get_from_contexts(Name, Types, Params, Contexts);
            ({Name, tbl, {_, _}}) ->
                 select(Name, Types, Params, all)
         end,
-    select(F, Names).
+    try 
+        {ok, select(F, Names)}
+    catch
+        _:E -> {error, E}
+    end.
 
 % -spec select(estatist:select_names(), estatist:select_types(), estatist:select_params(), estatist:select_row_id()) ->
-%     estatist:select_results().
+%     {ok, estatist:select_results()} | {error, term()}.
 select(Names, Types, Params, RowID) ->
     F = fun({Name, tbl, {Tid, _}}) ->
                 GetFromRow = fun(ID) ->
@@ -144,7 +151,11 @@ select(Names, Types, Params, RowID) ->
            ({_, var, {_, _}}) ->
                 undefined
         end,
-    select(F, Names).
+    try 
+        {ok, select(F, Names)}
+    catch
+        _:E -> {error, E}
+    end.
 
 select_1({id, ID}, GetFromRow) ->
     GetFromRow(correct_row_id(ID)).

@@ -1,0 +1,3 @@
+{application,estatist}.
+{packages,[]}.
+{modules,[estatist]}.

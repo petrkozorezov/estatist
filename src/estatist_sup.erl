@@ -1,3 +1,6 @@
+% @author Kozorezov Petr <petr.kozorezov@gmail.com>
+% @copyright 2012 Kozorezov Petr
+% @private
 -module(estatist_sup).
 -behaviour(supervisor).
 -export([start_link/0]).

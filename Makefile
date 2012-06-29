@@ -1,7 +1,5 @@
 REBAR=./rebar
-ERLDOCS=./erldocs
 DIALYZER=dialyzer
-DOC=doc
 
 .PHONY: all compile get-deps clean distclean config doc dialyzer
 
@@ -28,8 +26,8 @@ release: $(REBAR)
 get-deps: $(REBAR)
 	$(REBAR) get-deps
 
-doc: $(ERLDOCS)
-	$(ERLDOCS) $(DOC)
+doc: compile
+	$(REBAR) doc skip_deps=true
 
 ## dialyzer
 ## you have to compile project first

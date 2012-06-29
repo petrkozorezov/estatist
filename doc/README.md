@@ -24,12 +24,12 @@ As consequence of using ets tables, application can aggregate only from local no
 
 Workflow is:
 
- 
+
 
 * set metrics in config;
- * run application;
- * update metrics with `estatist:update` or `estatist:tc_update`;
- * get value by http interface or by `estatist:select`.
+* run application;
+* update metrics with `estatist:update` or `estatist:tc_update`;
+* get value by http interface or by `estatist:select`.
 
 
 
@@ -68,15 +68,15 @@ estatist:select_all().</pre>
 ####<a name="Complex">Complex</a>##
 
 
-<pre>application:set_env(estatist, [{metrics, [{online_counter, var, [counter]}, {tests, tbl, [simple_meter, histogram]}, {system, var, [system_info]}]}]).
+<pre>application:set_env(estatist, metrics, [{online_counter, var, [counter]}, {tests, tbl, [simple_meter, histogram]}, {system, var, [system_info]}]).
 estatist:start().
 
 estatist:update(online_counter, 1).
-estatist:tc_update({rps, "lists:seq"}, {lists, seq, [1, 1000]}).
-estatist:tc_update({rps, "lists:seq"}, {lists, seq, [1, 1000]}).
+estatist:tc_update({tests, "lists:seq"}, {lists, seq, [1, 1000]}).
+estatist:tc_update({tests, "lists:seq"}, {lists, seq, [1, 1000]}).
 
 estatist:select([{names, online_counter}, {types, counter}, {params, count}]).
-estatist:select([{names, online_counter}, {types, simple_meter}]).
+estatist:select([{names, online_counter}, {types, counter}]).
 estatist:select([{names, [online_counter, tests]}]).</pre>
 
 

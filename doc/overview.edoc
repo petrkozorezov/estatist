@@ -15,8 +15,8 @@ Workflow is:
 
 * set metrics in config;
 * run application;
-* update metrics with `estatist:update' or `estatist:tc_update';
-* get value by http interface or by `estatist:select'.
+* update metrics with {@link estatist:update/2} or {@link estatist:tc_update/2};
+* get value by http interface or by {@link estatist:select/1}.
 
 Also see http interface library [estatist_http](https://github.com/petrkozorezov/estatist_http).
 
@@ -99,6 +99,81 @@ Configuration complex example from real game server:
   ]}
 ]}
 '''
+
+=== Available metric types modules ===
+
+For complete list see `estatist_module_*.erl' files.
+
+
+==== counter ====
+
+Just count values.
+
+Params:
+
+* count
+
+
+==== histogram ====
+
+Calculate min/max, mean, stddev, percentiles in `size' values.
+
+When values count becomes greater than the size, a random elements are replaced.
+
+Options:
+
+* size
+
+Params:
+
+* min
+* max
+* mean
+* count
+* stddev
+* p50
+* p95
+* p99
+
+
+==== meter ====
+
+Calculate load average.
+
+Options:
+
+* tick -- LA tick in ms
+
+Params:
+
+* count
+* one
+* five
+* fifteen
+
+
+==== simple_meter ====
+
+Same as meter, but count only {@link estatist:update/2} calls ignoring value.
+
+
+==== system_info ====
+
+Some system info.
+
+Params:
+
+* cpu_usage
+* uptime
+* process_usage
+* io_input
+* io_output
+* process_count
+
+==== memory ====
+
+Same as `erlang:memory()'.
+
 
 === License ===
 

@@ -28,8 +28,8 @@ Workflow is:
 
 * set metrics in config;
 * run application;
-* update metrics with `estatist:update` or `estatist:tc_update`;
-* get value by http interface or by `estatist:select`.
+* update metrics with [`estatist:update/2`](estatist.md#update-2) or [`estatist:tc_update/2`](estatist.md#tc_update-2);
+* get value by http interface or by [`estatist:select/1`](estatist.md#select-1).
 
 
 
@@ -127,6 +127,136 @@ Configuration complex example from real game server:
     {modules_errors, tbl, [{simple_meter, [{tick, 60000}]}]}
   ]}
 ]}</pre>
+
+
+
+####<a name="Available_metric_types_modules">Available metric types modules</a>##
+
+
+
+
+For complete list see `estatist_module_*.erl` files.
+
+
+
+<h5><a name="counter">counter</a></h5>
+
+
+
+
+Just count values.
+
+
+
+Params:
+
+
+
+* count
+
+
+
+<h5><a name="histogram">histogram</a></h5>
+
+
+
+
+Calculate min/max, mean, stddev, percentiles in `size` values.
+
+
+
+When values count becomes greater than the size, a random elements are replaced.
+
+
+
+Options:
+
+
+
+* size
+
+
+
+Params:
+
+
+
+* min
+* max
+* mean
+* count
+* stddev
+* p50
+* p95
+* p99
+
+
+
+<h5><a name="meter">meter</a></h5>
+
+
+
+
+Calculate load average.
+
+
+
+Options:
+
+
+
+* tick -- LA tick in ms
+
+
+
+Params:
+
+
+
+* count
+* one
+* five
+* fifteen
+
+
+
+<h5><a name="simple_meter">simple_meter</a></h5>
+
+
+
+
+Same as meter, but count only [`estatist:update/2`](estatist.md#update-2) calls ignoring value.
+
+
+
+<h5><a name="system_info">system_info</a></h5>
+
+
+
+
+Some system info.
+
+
+
+Params:
+
+
+
+* cpu_usage
+* uptime
+* process_usage
+* io_input
+* io_output
+* process_count
+
+
+<h5><a name="memory">memory</a></h5>
+
+
+
+
+Same as `erlang:memory()`.
+
 
 
 

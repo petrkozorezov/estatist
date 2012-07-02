@@ -8,9 +8,11 @@ Copyright (c) 2012 Petr Kozorezov
 
 __Authors:__ Petr Kozorezov ([`petr.kozorezov@gmail.com`](mailto:petr.kozorezov@gmail.com)).
 
+[![Build Status](https://secure.travis-ci.org/petrkozorezov/estatist.png?branch=master "Build Status")](http://travis-ci.
+org/petrkozorezov/estatist)
+
 
 ###<a name="Overview">Overview</a>##
-
 
 
 

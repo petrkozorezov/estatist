@@ -3,8 +3,10 @@
 @copyright 2012 Petr Kozorezov
 
 @doc
-== Overview ==
 
+[![Build Status](https://secure.travis-ci.org/petrkozorezov/estatist.png?branch=master "Build Status")](http://travis-ci.
+org/petrkozorezov/estatist)
+== Overview ==
 
 Estatist is the fast statistics aggregator for erlang applications,
 based on basho_metrics and est tables. This all allows to reduce perfomance costs,

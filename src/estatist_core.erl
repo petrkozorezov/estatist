@@ -17,8 +17,7 @@
          update/2,
          get/3,
          select/3,
-         select/4,
-         test/0
+         select/4
         ]).
 
 %%
@@ -47,21 +46,14 @@ stop(Reason) ->
     Name        :: estatist:metric_name(),
     Scalarity   :: estatist:metric_scalarity(),
     MetricTypes :: estatist:metric_types().
-add_metric(Name, Scalarity, MetricTypes) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
-    try
-        Context = init_metric(Scalarity, Name, MetricTypes),
-        true = ets:insert_new(?MODULE, {Name, Scalarity, Context}), ok
-    catch
-        _:E -> {error, E}
-    end;
 add_metric(Name, Scalarity, MetricTypes) ->
-    {error, {incorrect_metric, {Name, Scalarity, MetricTypes}}}.
+    gen_server:call(?MODULE, {add_metric, Name, Scalarity, MetricTypes}).
 
 
 -spec delete_metric(Name) -> ok when
     Name :: estatist:metric_name().
 delete_metric(Name) ->
-    true = ets:delete(?MODULE, Name), ok.
+    gen_server:call(?MODULE, {delete_metric, Name}).
 
 
 -spec update(MetricID, Value) -> ok | {error, term()} when
@@ -108,7 +100,8 @@ select(Names, Types, Params) ->
     F = fun({Name, var, Contexts}) ->
                 get_from_contexts(Name, Types, Params, Contexts);
            ({Name, tbl, {_, _}}) ->
-                select(Name, Types, Params, all)
+                {ok, Result} = select(Name, Types, Params, all),
+                Result
         end,
     try 
         {ok, select(F, Names)}
@@ -176,12 +169,9 @@ init(Options) ->
 
     Metrics = proplists:get_value(metrics, Options, []),
 
-    InitMetric =
-        fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
-                add_metric(Name, Scalarity, MetricTypes);
-           (IncorrectMetric) ->
-                throw({incorrect_metric, IncorrectMetric})
-        end,
+    InitMetric = fun ({Name, Scalarity, MetricTypes}) ->
+        insert_metric(Name, Scalarity, MetricTypes)
+    end,
 
     lists:foreach(InitMetric, Metrics),
 
@@ -189,6 +179,22 @@ init(Options) ->
 
 handle_call({stop, Reason}, _, State) ->
     {stop, Reason, ok, State};
+
+handle_call({add_metric, Name, Scalarity, MetricTypes}, _, State) ->
+    Reply = try
+        insert_metric(Name, Scalarity, MetricTypes)
+    catch _:E ->
+        {error, E}
+    end,
+    {reply, Reply, State};
+
+handle_call({delete_metric, Name}, _, State) ->
+    Reply = try
+        remove_metric(Name)
+    catch _:E ->
+        {error, E}
+    end,
+    {reply, Reply, State};
 
 handle_call({add_tbl_row, Tid, Name, RowName, MagicTuples}, _, State) ->
     %% todo lookup
@@ -227,6 +233,27 @@ code_change(_, State, _) ->
 %%
 %% Local functions
 %%
+
+insert_metric(Name, Scalarity, MetricTypes) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
+    Context = init_metric(Scalarity, Name, MetricTypes),
+    true = ets:insert_new(?MODULE, {Name, Scalarity, Context}), 
+    ok;
+
+insert_metric(Name, Scalarity, MetricTypes) ->
+    throw({incorrect_metric, {Name, Scalarity, MetricTypes}}).
+
+remove_metric(Name) ->
+    case ets:lookup(?MODULE, Name) of
+        [{Name, var, Contexts}] ->
+            [unschedule_tick(TimerRef) || {_, _, _, TimerRef} <- Contexts];
+        [{Name, tbl, {Tid, _}}] ->
+            Contexts = ets:tab2list(Tid),
+            true = ets:delete(Tid),
+            [unschedule_tick(TimerRef) || {_, {_, _, _, TimerRef}} <- Contexts]
+    end,
+    true = ets:delete(?MODULE, Name),
+    ok.
+
 init_metric(var, Name, MetricTypes) ->
     InitMetricType =
         fun(MetricType) ->
@@ -248,9 +275,9 @@ make_magic_tuple(MetricType) ->
 
 init_metric_type(Name, {MetricType, Mod, Options}) ->
     {Context, Tick} = Mod:init(Name, Options),
-    schedule_tick(Tick, Context, Mod),
+    TimerRef = schedule_tick(Tick, Context, Mod),
     %%io:format(" init \"~p\" [~p]: ~p~n", [Name, MetricType, Context]),
-    {MetricType, Mod, Context}.
+    {MetricType, Mod, Context, TimerRef}.
 
 get_metric_type_module(MetricType) ->
     list_to_atom("estatist_module_" ++ atom_to_list(MetricType)).
@@ -278,7 +305,7 @@ get_metric(Name) when is_atom(Name)->
     end.
 
 get_from_contexts(Name, all, Params, Contexts) ->
-    F = fun({Type, Mod, Context}) ->
+    F = fun({Type, Mod, Context, _}) ->
                 {Type, Mod:get(Name, Context, Params)}
         end,
     lists:map(F, Contexts);
@@ -289,12 +316,12 @@ get_from_contexts(Name, Type, Params, Contexts) when is_atom(Type) ->
     case lists:keyfind(Type, 1, Contexts) of
         false ->
             erlang:throw({type_for_this_metric_not_found, Name, Type});
-        {Type, Mod, Context} ->
+        {Type, Mod, Context, _} ->
             Mod:get(Name, Context, Params)
     end.
 
 update_by_contexts(Name, Contexts, Value) ->
-    F = fun({_Type, Mod, Context}) ->
+    F = fun({_Type, Mod, Context, _}) ->
                 Mod:update(Name, Context, Value)
         end,
     lists:foreach(F, Contexts),
@@ -346,12 +373,19 @@ correct_row_id_1(_, List) ->
     throw({incorrect_row_id, List}).
 
 schedule_tick(undefined, _, _) ->
-    ok;
+    undefined;
 schedule_tick(Tick, Context, Mod) ->
-    {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}), ok.
+    {ok, Result} = timer:send_interval(Tick, {tick, {Mod, Context}}), Result.
 
-%% TODO auto test
-test() ->
+unschedule_tick(undefined) ->
+    undefined;
+unschedule_tick(Ref) ->
+    timer:cancel(Ref).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+simple_test() ->
     Options = [
                {metrics, [
                           %%{online_counte1, var, [counter]},
@@ -365,22 +399,27 @@ test() ->
                           {meter, estatist_module_meter}
                          ]}
               ],
+    ?debugMsg("Starting core server ..."),
     {ok, _Pid} = start_link(Options),
+    ?debugMsg("Done"),
     ok = update(online_counter, 1),
     ok = update(player_save, 1),
     ok = update(player_save, 100),
+    ?debugMsg("Running selects ..."),
     F = fun(V) ->
                 timer:sleep(1000),
-                io:format("select \"online_counter\": ~640p ~n", [select(online_counter, counter, count)]),
-                io:format("select \"player_save\" meter: ~640p ~n", [select(player_save, meter, [one, five, fifteen])]),
-                io:format("select \"player_save\" histogram: ~640p ~n", [select(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
+                ?debugFmt("select \"online_counter\": ~640p", [select(online_counter, counter, count)]),
+                ?debugFmt("select \"player_save\" meter: ~640p", [select(player_save, meter, [one, five, fifteen])]),
+                ?debugFmt("select \"player_save\" histogram: ~640p", [select(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
 
                 ok = update({game_requests, list_to_atom(integer_to_list(V))}, 100),
-                io:format("select \"game_requests\" all: ~640p ~n", [select(game_requests, all, all)]),
-                io:format("all: ~640p ~n", [select(all, all, all)])
+                ?debugFmt("select \"game_requests\" all: ~640p", [select(game_requests, all, all)]),
+                ?debugFmt("all: ~640p", [select(all, all, all)])
                 
         end,
     lists:foreach(F, [2,1,3,0]),
+    ?debugMsg("Done"),
     stop(normal),
     ok.
 
+-endif.

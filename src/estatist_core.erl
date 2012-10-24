@@ -17,8 +17,7 @@
          update/2,
          get/3,
          select/3,
-         select/4,
-         test/0
+         select/4
         ]).
 
 %%
@@ -47,21 +46,14 @@ stop(Reason) ->
     Name        :: estatist:metric_name(),
     Scalarity   :: estatist:metric_scalarity(),
     MetricTypes :: estatist:metric_types().
-add_metric(Name, Scalarity, MetricTypes) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
-    try
-        Context = init_metric(Scalarity, Name, MetricTypes),
-        true = ets:insert_new(?MODULE, {Name, Scalarity, Context}), ok
-    catch
-        _:E -> {error, E}
-    end;
 add_metric(Name, Scalarity, MetricTypes) ->
-    {error, {incorrect_metric, {Name, Scalarity, MetricTypes}}}.
+    gen_server:call(?MODULE, {add_metric, Name, Scalarity, MetricTypes}).
 
 
 -spec delete_metric(Name) -> ok when
     Name :: estatist:metric_name().
 delete_metric(Name) ->
-    true = ets:delete(?MODULE, Name), ok.
+    gen_server:call(?MODULE, {delete_metric, Name}).
 
 
 -spec update(MetricID, Value) -> ok | {error, term()} when
@@ -108,7 +100,9 @@ select(Names, Types, Params) ->
     F = fun({Name, var, Contexts}) ->
                 get_from_contexts(Name, Types, Params, Contexts);
            ({Name, tbl, {_, _}}) ->
-                select(Name, Types, Params, all)
+                %% There was initially nested {ok, ...} responses
+                {ok, Result} = select(Name, Types, Params, all),
+                Result
         end,
     try 
         {ok, select(F, Names)}
@@ -176,12 +170,9 @@ init(Options) ->
 
     Metrics = proplists:get_value(metrics, Options, []),
 
-    InitMetric =
-        fun({Name, Scalarity, MetricTypes}) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
-                add_metric(Name, Scalarity, MetricTypes);
-           (IncorrectMetric) ->
-                throw({incorrect_metric, IncorrectMetric})
-        end,
+    InitMetric = fun ({Name, Scalarity, MetricTypes}) ->
+        insert_metric(Name, Scalarity, MetricTypes)
+    end,
 
     lists:foreach(InitMetric, Metrics),
 
@@ -190,13 +181,29 @@ init(Options) ->
 handle_call({stop, Reason}, _, State) ->
     {stop, Reason, ok, State};
 
+handle_call({add_metric, Name, Scalarity, MetricTypes}, _, State) ->
+    Reply = try
+        insert_metric(Name, Scalarity, MetricTypes)
+    catch _:E ->
+        {error, E}
+    end,
+    {reply, Reply, State};
+
+handle_call({delete_metric, Name}, _, State) ->
+    Reply = try
+        remove_metric(Name)
+    catch _:E ->
+        {error, E}
+    end,
+    {reply, Reply, State};
+
 handle_call({add_tbl_row, Tid, Name, RowName, MagicTuples}, _, State) ->
     %% todo lookup
     Reply = case get_tbl_row(Tid, RowName) of
         undefined ->
             InitMetricType =
                 fun(MagicTuple) ->
-                        init_metric_type({Name, RowName}, MagicTuple)
+                        init_metric_type({Name, RowName}, row, MagicTuple)
                 end,
             Value = {RowName, lists:map(InitMetricType, MagicTuples)},
             true = ets:insert_new(Tid, Value),
@@ -212,9 +219,30 @@ handle_call(_, _, State) ->
 handle_cast(_, State) ->
     {noreply, State}.
 
-handle_info({tick, {Mod, Context}}, State) ->
-    Mod:tick(Context),
+handle_info({tick, var, Tick, Name, ModContext = {Mod, Context}}, State) ->
+    case ets:lookup(?MODULE, Name) of
+        [] ->
+            ok;
+        _ ->
+            Mod:tick(Context),
+            ok = schedule_tick(Tick, var, Name, ModContext)
+    end,
     {noreply, State};
+
+handle_info({tick, tbl, Tick, Name, TableType = {Tid, Type}}, State) ->
+    case ets:lookup(?MODULE, Name) of
+        [] ->
+            ok;
+        _ ->
+            %% The table itself is surely live since removal is now synchronized
+            ok = ets:foldl(fun ({_Name, Contexts}, Acc) ->
+                [Mod:tick(Context) || {Type0, Mod, Context} <- Contexts, Type0 =:= Type],
+                Acc
+            end, ok, Tid),
+            ok = schedule_tick(Tick, tbl, Name, TableType)
+    end,
+    {noreply, State};
+
 handle_info(_, State) ->
     {noreply, State}.
 
@@ -227,29 +255,54 @@ code_change(_, State, _) ->
 %%
 %% Local functions
 %%
+
+insert_metric(Name, Scalarity, MetricTypes) when is_atom(Name) and ((Scalarity == var) or (Scalarity == tbl)) ->
+    Context = init_metric(Scalarity, Name, MetricTypes),
+    true = ets:insert_new(?MODULE, {Name, Scalarity, Context}), 
+    ok;
+
+insert_metric(Name, Scalarity, MetricTypes) ->
+    throw({incorrect_metric, {Name, Scalarity, MetricTypes}}).
+
+remove_metric(Name) ->
+    case ets:lookup(?MODULE, Name) of
+        [{Name, var, _}] ->
+            true;
+        [{Name, tbl, {Tid, _}}] ->
+            true = ets:delete(Tid)
+    end,
+    true = ets:delete(?MODULE, Name),
+    ok.
+
 init_metric(var, Name, MetricTypes) ->
     InitMetricType =
         fun(MetricType) ->
-                init_metric_type(Name, make_magic_tuple(MetricType))
+                init_metric_type(Name, var, make_magic_tuple(MetricType))
         end,
     lists:map(InitMetricType, MetricTypes);
 
-init_metric(tbl, _Name, MetricTypes) ->
+init_metric(tbl, Name, MetricTypes) ->
+    Tid = ets:new(?MODULE, [public, set]),
     F = fun(MetricType) ->
-                make_magic_tuple(MetricType)
+                %% Let us make a timer per metric instead of per metric-and-every-row.
+                %% It will certainly save us some cycles but on the other hand there is
+                %% ugly init procedure with dummy metric context.
+                Magic = make_magic_tuple(MetricType),
+                {Type, Mod, Options} = Magic,
+                {_Dummy, Tick} = Mod:init(Name, Options),
+                ok = schedule_tick(Tick, tbl, Name, {Tid, Type}),
+                Magic
         end,
-    %%io:format(" init table \"~p\" ~p~n", [Name, MetricTypes]),
-    {ets:new(?MODULE, [public, set]), lists:map(F, MetricTypes)}.
+    {Tid, lists:map(F, MetricTypes)}.
 
 make_magic_tuple(MetricType) ->
     {SplittedMetricType, Options} = split_metric_type_option(MetricType),
     Mod = get_metric_type_module(SplittedMetricType),
     {SplittedMetricType, Mod, Options}.
 
-init_metric_type(Name, {MetricType, Mod, Options}) ->
+init_metric_type(Name, Mode, {MetricType, Mod, Options}) ->
     {Context, Tick} = Mod:init(Name, Options),
-    schedule_tick(Tick, Context, Mod),
-    %%io:format(" init \"~p\" [~p]: ~p~n", [Name, MetricType, Context]),
+    ok = schedule_tick(Tick, Mode, Name, {Mod, Context}),
     {MetricType, Mod, Context}.
 
 get_metric_type_module(MetricType) ->
@@ -345,13 +398,18 @@ correct_row_id_1(E, _) when is_integer(E) -> E;
 correct_row_id_1(_, List) ->
     throw({incorrect_row_id, List}).
 
-schedule_tick(undefined, _, _) ->
+schedule_tick(undefined, _, _, _) ->
     ok;
-schedule_tick(Tick, Context, Mod) ->
-    {ok, _} = timer:send_interval(Tick, {tick, {Mod, Context}}), ok.
+schedule_tick(_Tick, row, _Name, _ModContext) ->
+    ok;
+schedule_tick(Tick, Mode, Name, Context) when Mode =:= var orelse Mode =:= tbl ->
+    erlang:send_after(Tick, self(), {tick, Mode, Tick, Name, Context}),
+    ok.
 
-%% TODO auto test
-test() ->
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+simple_test() ->
     Options = [
                {metrics, [
                           %%{online_counte1, var, [counter]},
@@ -365,22 +423,27 @@ test() ->
                           {meter, estatist_module_meter}
                          ]}
               ],
+    ?debugMsg("Starting core server ..."),
     {ok, _Pid} = start_link(Options),
+    ?debugMsg("Done"),
     ok = update(online_counter, 1),
     ok = update(player_save, 1),
     ok = update(player_save, 100),
+    ?debugMsg("Running selects ..."),
     F = fun(V) ->
                 timer:sleep(1000),
-                io:format("select \"online_counter\": ~640p ~n", [select(online_counter, counter, count)]),
-                io:format("select \"player_save\" meter: ~640p ~n", [select(player_save, meter, [one, five, fifteen])]),
-                io:format("select \"player_save\" histogram: ~640p ~n", [select(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
+                ?debugFmt("select \"online_counter\": ~640p", [select(online_counter, counter, count)]),
+                ?debugFmt("select \"player_save\" meter: ~640p", [select(player_save, meter, [one, five, fifteen])]),
+                ?debugFmt("select \"player_save\" histogram: ~640p", [select(player_save, histogram, [min, max, mean, count, stddev, p50, p95, p99])]),
 
                 ok = update({game_requests, list_to_atom(integer_to_list(V))}, 100),
-                io:format("select \"game_requests\" all: ~640p ~n", [select(game_requests, all, all)]),
-                io:format("all: ~640p ~n", [select(all, all, all)])
+                ?debugFmt("select \"game_requests\" all: ~640p", [select(game_requests, all, all)]),
+                ?debugFmt("all: ~640p", [select(all, all, all)])
                 
         end,
     lists:foreach(F, [2,1,3,0]),
+    ?debugMsg("Done"),
     stop(normal),
     ok.
 
+-endif.

@@ -57,7 +57,7 @@ cpu_usage() ->
     {_, WC} = erlang:statistics(wall_clock),
     {_, RT} = erlang:statistics(runtime),
     P = erlang:system_info(logical_processors_online),
-    round(100 * RT / WC / P).
+    round(100 * RT / (WC + 1) / P).
 
 process_usage() ->
     erlang:system_info(process_count) div erlang:system_info(process_limit) * 100.

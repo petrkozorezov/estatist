@@ -202,7 +202,7 @@ handle_call({add_tbl_row, Tid, Name, RowName, MagicTuples}, _, State) ->
         undefined ->
             InitMetricType =
                 fun(MagicTuple) ->
-                        init_metric_type({Name, RowName}, MagicTuple)
+                        init_metric_type({Name, RowName}, row, MagicTuple)
                 end,
             Value = {RowName, lists:map(InitMetricType, MagicTuples)},
             true = ets:insert_new(Tid, Value),
@@ -218,9 +218,19 @@ handle_call(_, _, State) ->
 handle_cast(_, State) ->
     {noreply, State}.
 
-handle_info({tick, {Mod, Context}}, State) ->
+handle_info({tick, var, Tick, ModContext = {Mod, Context}}, State) ->
     Mod:tick(Context),
+    ok = schedule_tick(Tick, var, ModContext),
     {noreply, State};
+
+handle_info({tick, tbl, Tick, TableType = {Tid, Type}}, State) ->
+    ok = ets:foldr(fun ({_Name, Contexts}, Acc) ->
+        [Mod:tick(Context) || {Type0, Mod, Context} <- Contexts, Type0 =:= Type],
+        Acc
+    end, ok, Tid),
+    ok = schedule_tick(Tick, tbl, TableType),
+    {noreply, State};
+
 handle_info(_, State) ->
     {noreply, State}.
 
@@ -244,12 +254,10 @@ insert_metric(Name, Scalarity, MetricTypes) ->
 
 remove_metric(Name) ->
     case ets:lookup(?MODULE, Name) of
-        [{Name, var, Contexts}] ->
-            [unschedule_tick(TimerRef) || {_, _, _, TimerRef} <- Contexts];
+        [{Name, var, _}] ->
+            true;
         [{Name, tbl, {Tid, _}}] ->
-            Contexts = ets:tab2list(Tid),
-            true = ets:delete(Tid),
-            [unschedule_tick(TimerRef) || {_, {_, _, _, TimerRef}} <- Contexts]
+            true = ets:delete(Tid)
     end,
     true = ets:delete(?MODULE, Name),
     ok.
@@ -257,27 +265,30 @@ remove_metric(Name) ->
 init_metric(var, Name, MetricTypes) ->
     InitMetricType =
         fun(MetricType) ->
-                init_metric_type(Name, make_magic_tuple(MetricType))
+                init_metric_type(Name, var, make_magic_tuple(MetricType))
         end,
     lists:map(InitMetricType, MetricTypes);
 
-init_metric(tbl, _Name, MetricTypes) ->
+init_metric(tbl, Name, MetricTypes) ->
+    Tid = ets:new(?MODULE, [public, set]),
     F = fun(MetricType) ->
-                make_magic_tuple(MetricType)
+                Magic = make_magic_tuple(MetricType),
+                {Type, Mod, Options} = Magic,
+                {_Dummy, Tick} = Mod:init(Name, Options),
+                ok = schedule_tick(Tick, tbl, {Tid, Type}),
+                Magic
         end,
-    %%io:format(" init table \"~p\" ~p~n", [Name, MetricTypes]),
-    {ets:new(?MODULE, [public, set]), lists:map(F, MetricTypes)}.
+    {Tid, lists:map(F, MetricTypes)}.
 
 make_magic_tuple(MetricType) ->
     {SplittedMetricType, Options} = split_metric_type_option(MetricType),
     Mod = get_metric_type_module(SplittedMetricType),
     {SplittedMetricType, Mod, Options}.
 
-init_metric_type(Name, {MetricType, Mod, Options}) ->
+init_metric_type(Name, Mode, {MetricType, Mod, Options}) ->
     {Context, Tick} = Mod:init(Name, Options),
-    TimerRef = schedule_tick(Tick, Context, Mod),
-    %%io:format(" init \"~p\" [~p]: ~p~n", [Name, MetricType, Context]),
-    {MetricType, Mod, Context, TimerRef}.
+    ok = schedule_tick(Tick, Mode, {Mod, Context}),
+    {MetricType, Mod, Context}.
 
 get_metric_type_module(MetricType) ->
     list_to_atom("estatist_module_" ++ atom_to_list(MetricType)).
@@ -305,7 +316,7 @@ get_metric(Name) when is_atom(Name)->
     end.
 
 get_from_contexts(Name, all, Params, Contexts) ->
-    F = fun({Type, Mod, Context, _}) ->
+    F = fun({Type, Mod, Context}) ->
                 {Type, Mod:get(Name, Context, Params)}
         end,
     lists:map(F, Contexts);
@@ -316,12 +327,12 @@ get_from_contexts(Name, Type, Params, Contexts) when is_atom(Type) ->
     case lists:keyfind(Type, 1, Contexts) of
         false ->
             erlang:throw({type_for_this_metric_not_found, Name, Type});
-        {Type, Mod, Context, _} ->
+        {Type, Mod, Context} ->
             Mod:get(Name, Context, Params)
     end.
 
 update_by_contexts(Name, Contexts, Value) ->
-    F = fun({_Type, Mod, Context, _}) ->
+    F = fun({_Type, Mod, Context}) ->
                 Mod:update(Name, Context, Value)
         end,
     lists:foreach(F, Contexts),
@@ -373,14 +384,15 @@ correct_row_id_1(_, List) ->
     throw({incorrect_row_id, List}).
 
 schedule_tick(undefined, _, _) ->
-    undefined;
-schedule_tick(Tick, Context, Mod) ->
-    {ok, Result} = timer:send_interval(Tick, {tick, {Mod, Context}}), Result.
-
-unschedule_tick(undefined) ->
-    undefined;
-unschedule_tick(Ref) ->
-    timer:cancel(Ref).
+    ok;
+schedule_tick(_Tick, row, _ModContext) ->
+    ok;
+schedule_tick(Tick, tbl, TableType = {_, _}) ->
+    erlang:send_after(Tick, self(), {tick, tbl, Tick, TableType}),
+    ok;
+schedule_tick(Tick, var, ModContext = {_, _}) ->
+    erlang:send_after(Tick, self(), {tick, var, Tick, ModContext}),
+    ok.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
